@@ -48,7 +48,7 @@ class BeamSearchDecoder(object):
     self._batcher = batcher
     self._vocab = vocab
     self._saver = tf.train.Saver() # we use this to load checkpoints for decoding
-    self._sess = tf.Session(config=util.get_config())
+    self._sess = tf.Session(config=util.get_config()) 
 
     # Load an initial checkpoint to use for decoding
     ckpt_path = util.load_ckpt(self._saver, self._sess)

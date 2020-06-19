@@ -31,8 +31,8 @@ from tensorflow.python import debug as tf_debug
 
 FLAGS = tf.app.flags.FLAGS
 
-root="D:\python project me\data\my_bert_English/finished_files"
-data_root="D:\python project me\data\my_bert_English/finished_files/train.bin"
+root="/home/ddd/data/cnndailymail4/finished_files"
+data_root="/home/ddd/data/cnndailymail4/finished_files/train.bin"
 
 #root="/home/ddd/data/cnndailymail3/finished_files"
 #data_root="/home/ddd/data/cnndailymail3/finished_files/train.bin"
@@ -224,7 +224,7 @@ def run_training(model, batcher, sess_context_manager, sv, summary_writer):
 
       summary_writer.add_summary(summaries, train_step) # write the summaries
       if train_step % 100 == 0: # flush the summary writer every so often
-        summary_writer.flush()
+        summary_writer.flush()    
 
 
 def run_eval(model, batcher, vocab):
