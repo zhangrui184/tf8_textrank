@@ -16,7 +16,7 @@
 
 """This file contains code to run beam search decoding, including running ROUGE evaluation and producing JSON datafiles for the in-browser attention visualizer, which can be found here https://github.com/abisee/attn_vis"""
 
-import os
+import os,re
 import time
 import tensorflow as tf
 import beam_search
@@ -26,6 +26,11 @@ import pyrouge
 import util
 import logging
 import numpy as np
+import string    
+from data import Vocab
+from tensorflow.python import pywrap_tensorflow
+import networkx as nx
+from sklearn.metrics.pairwise import cosine_similarity
 
 FLAGS = tf.app.flags.FLAGS
 #single_pass=True
@@ -35,7 +40,7 @@ SECS_UNTIL_NEW_CKPT = 60  # max number of seconds before loading new checkpoint
 class BeamSearchDecoder(object):
   """Beam search decoder."""
 
-  def __init__(self, model, batcher, vocab):
+  def __init__(self, model, batcher, vocab,hps):
     """Initialize decoder.
 
     Args:
@@ -49,6 +54,7 @@ class BeamSearchDecoder(object):
     self._vocab = vocab
     self._saver = tf.train.Saver() # we use this to load checkpoints for decoding
     self._sess = tf.Session(config=util.get_config()) 
+    self._hps=hps
 
     # Load an initial checkpoint to use for decoding
     ckpt_path = util.load_ckpt(self._saver, self._sess)
@@ -110,6 +116,7 @@ class BeamSearchDecoder(object):
       except ValueError:
         decoded_words = decoded_words
       decoded_output = ' '.join(decoded_words) # single string
+      summarize_texted=self.summarize_texted(self._hps,original_article,decoded_output,self._vocab)
 
       if FLAGS.single_pass:
         self.write_for_rouge(original_abstract_sents, decoded_words, counter) # write ref summary and decoded summary to file, to eval with pyrouge later
@@ -124,6 +131,96 @@ class BeamSearchDecoder(object):
           tf.logging.info('We\'ve been decoding with same checkpoint for %i seconds. Time to load new checkpoint', t1-t0)
           _ = util.load_ckpt(self._saver, self._sess)
           t0 = time.time()
+
+  def summarize_texted(self,hps,original_article,decoded_output,vocab):
+      ckpt_file_name ='/home/ddd/data/cnndailymail3/finished_files/exp_logs/train/model.ckpt-33831'#model name
+      name_variable_to_restore='seq2seq/embedding/embedding'#variable name
+      decoded_output_list=re.split(r'[.]', decoded_output.strip())
+      top_n=len(decoded_output_list)
+      original_article_my=original_article.strip(string.punctuation) 
+      decoded_output_my=decoded_output.strip(string.punctuation) 
+      decoded_output_my_str=original_article_my+'.'+decoded_output_my
+      
+
+      def read_article(self,decoded_output_my_str):
+          sentence_word_list=[]
+          sentences_a=re.split(r'[.]', decoded_output_my_str.strip())#split sentence with '.'
+          for line in sentences_a:#line_split is a list include many str sentences
+            line_seg=line.split() #many str word
+            sentence_word_list.append(line_seg)
+          return sentence_word_list,sentences_a
+      def the_sentence_vectors(self,sentences, my_embedding,vocab ):
+          enc_input_list=[]
+          for sent in sentences:
+              enc_input=[vocab.word2id(w) for w in sent] 
+              enc_input_list.append(enc_input)#a list in sentence id
+        #sents_input_id = [vocab.word2id(w) for w in sents_words]
+       # s1=tf.nn.embedding_lookup(my_embedding,sents_input_id)
+          #sess = tf.Session()   #create seesion
+         # sess.run(tf.variables_initializer([my_embedding], name='init'))#run variable
+          sentence_vectors = []    #句子向量
+          
+          for i in enc_input_list:
+              if len(i):
+               # i_emb=tf.nn.embedding_lookup(my_embedding,i)
+               # i_emb_value=sess.run(i_emb)#get value of i_emb
+                
+                #v = sum([word_embeddings.get(w, np.random.uniform(0, 1, 128)) for w in i]) / (len(i) + 0.001)
+                  ##v = sum([sess.run(tf.nn.embedding_lookup(my_embedding,w)) for w in i]) / (len(i) + 0.001)
+                  v = sum([tf.nn.embedding_lookup(my_embedding,w) for w in i]) / (len(i) + 0.001)
+              else:
+                  v = np.random.uniform(0, 1, 128)
+              sentence_vectors.append(v)
+
+          return sentence_vectors
+
+      def build_similarity_matrix(self, sentences, sentence_vectors):
+       # Create an empty similarity matrix
+          similarity_matrix = np.zeros((len(sentences), len(sentences)))
+
+          for idx1 in range(len(sentences)):
+             for idx2 in range(len(sentences)):
+                 if idx1 != idx2:  # ignore if both are same sentences
+                  #continue
+              # similarity_matrix[idx1][idx2] = self.sentence_similarity(sentence_vectors[idx1].reshape(1,1),sentence_vectors[idx2].reshape(1,1))
+              # similarity_matrix[idx1][idx2] = self.sentence_similarity(sentence_vectors[idx1],sentence_vectors[idx2])
+                     similarity_matrix[idx1][idx2] = cosine_similarity(sentence_vectors[idx1].reshape(1,128),sentence_vectors[idx2].reshape(1,128))[0,0]
+          return similarity_matrix
+
+      def generate_summary(self, decoded_output_my_str,top_n,ckpt_file_name,name_variable_to_restore,vocab):
+          summarize_text = []
+         
+          #reader = pywrap_tensorflow.NewCheckpointReader(ckpt_file_name)#read .ckpt
+         # var_to_shape_map = reader.get_variable_to_shape_map()#get variable
+         # my_embedding = tf.get_variable("my_embedding", var_to_shape_map[name_variable_to_restore], trainable=False)#rename 'embedding'variable name to my_embedding
+          my_embedding = tf.get_variable('embedding', [50000, hps.emb_dim], dtype=tf.float32)
+
+          # Step 1 - Read text anc split it
+          sentences,line_split= read_article(self,decoded_output_my_str)
+          sentence_vectors= the_sentence_vectors(self,sentences,my_embedding,vocab)
+          # Step 2 - Generate Similary Martix across sentences
+          sentence_similarity_martix = build_similarity_matrix(self,sentences, sentence_vectors)
+
+          # Step 3 - Rank sentences in similarity martix
+          sentence_similarity_graph = nx.from_numpy_array(sentence_similarity_martix)
+          scores = nx.pagerank(sentence_similarity_graph,max_iter=300)#max_iter is 最大迭代次数
+
+           # Step 4 - Sort the rank and pick top sentences
+          ranked_sentence = sorted(((scores[i], s) for i, s in enumerate(line_split)), reverse=True)
+           # print("Indexes of top ranked_sentence order are ", ranked_sentence)
+
+          for i in range(top_n):
+              summarize_text.append("".join(ranked_sentence[i][1]))
+          summarize_texted=". ".join(summarize_text)
+          return summarize_texted,sentences
+          # Step 5 - Offcourse, output the summarize texr
+          # print("Summarize Text: \n", ". ".join(summarize_text))
+          # print("lllaaaaaa\n",summarize_texted)
+      
+      summarize_texted,sentences=generate_summary(self,decoded_output_my_str,top_n,ckpt_file_name,name_variable_to_restore,vocab)
+      return summarize_texted
+
+
 
   def write_for_rouge(self, reference_sents, decoded_words, ex_index):
     """Write output to file in correct format for eval with pyrouge. This is called in single_pass mode.
