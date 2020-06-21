@@ -58,6 +58,7 @@ class BeamSearchDecoder(object):
 
     # Load an initial checkpoint to use for decoding
     ckpt_path = util.load_ckpt(self._saver, self._sess)
+    
 
     if FLAGS.single_pass:
       # Make a descriptive decode directory name
@@ -81,7 +82,7 @@ class BeamSearchDecoder(object):
       if not os.path.exists(self._rouge_dec_dir): os.mkdir(self._rouge_dec_dir)
 
 
-  def decode(self):
+  def decode(self,my_embedding):
     """Decode examples until data is exhausted (if FLAGS.single_pass) and return, or decode indefinitely, loading latest checkpoint at regular intervals"""
     t0 = time.time()
     counter = 0
@@ -116,7 +117,7 @@ class BeamSearchDecoder(object):
       except ValueError:
         decoded_words = decoded_words
       decoded_output = ' '.join(decoded_words) # single string
-      summarize_texted=self.summarize_texted(self._hps,original_article,decoded_output,self._vocab)
+      summarize_texted=self.summarize_texted(self._hps,original_article,decoded_output,self._vocab,my_embedding)
 
       if FLAGS.single_pass:
         self.write_for_rouge(original_abstract_sents, decoded_words, counter) # write ref summary and decoded summary to file, to eval with pyrouge later
@@ -132,7 +133,7 @@ class BeamSearchDecoder(object):
           _ = util.load_ckpt(self._saver, self._sess)
           t0 = time.time()
 
-  def summarize_texted(self,hps,original_article,decoded_output,vocab):
+  def summarize_texted(self,hps,original_article,decoded_output,vocab,my_embedding):
       ckpt_file_name ='/home/ddd/data/cnndailymail3/finished_files/exp_logs/train/model.ckpt-33831'#model name
       name_variable_to_restore='seq2seq/embedding/embedding'#variable name
       decoded_output_list=re.split(r'[.]', decoded_output.strip())
@@ -149,25 +150,33 @@ class BeamSearchDecoder(object):
             line_seg=line.split() #many str word
             sentence_word_list.append(line_seg)
           return sentence_word_list,sentences_a
-      def the_sentence_vectors(self,sentences, my_embedding,vocab ):
+      def the_sentence_vectors(self,sentences, my_embedding,vocab):
           enc_input_list=[]
           for sent in sentences:
               enc_input=[vocab.word2id(w) for w in sent] 
               enc_input_list.append(enc_input)#a list in sentence id
-        #sents_input_id = [vocab.word2id(w) for w in sents_words]
-       # s1=tf.nn.embedding_lookup(my_embedding,sents_input_id)
-          #sess = tf.Session()   #create seesion
-         # sess.run(tf.variables_initializer([my_embedding], name='init'))#run variable
-          sentence_vectors = []    #句子向量
+          #sents_input_id = [vocab.word2id(w) for w in sents_words]
+          # s1=tf.nn.embedding_lookup(my_embedding,sents_input_id)
           
+          # sess.run(tf.variables_initializer([my_embedding], name='init'))#run variable
+          sentence_vectors = []    #句子向量
+          #a = tf.constant([10, 20])
+          #b = tf.constant([1.0, 2.0])
+          #asas=self._sess.run(a)
+          self._sess.run(tf.variables_initializer([my_embedding], name='init'))#run variable
+
+          #i_emb=tf.nn.embedding_lookup(my_embedding,36)
+          #i_emb_value=self._sess.run(i_emb)#get value of i_emb
+          
+          #qqq=sess.run(tf.nn.embedding_lookup(my_embedding,1)
           for i in enc_input_list:
               if len(i):
-               # i_emb=tf.nn.embedding_lookup(my_embedding,i)
-               # i_emb_value=sess.run(i_emb)#get value of i_emb
-                
-                #v = sum([word_embeddings.get(w, np.random.uniform(0, 1, 128)) for w in i]) / (len(i) + 0.001)
-                  ##v = sum([sess.run(tf.nn.embedding_lookup(my_embedding,w)) for w in i]) / (len(i) + 0.001)
-                  v = sum([tf.nn.embedding_lookup(my_embedding,w) for w in i]) / (len(i) + 0.001)
+                  # i_emb=tf.nn.embedding_lookup(my_embedding,i)
+                  # i_emb_value=sess.run(i_emb)#get value of i_emb
+                  
+                  #v = sum([word_embeddings.get(w, np.random.uniform(0, 1, 128)) for w in i]) / (len(i) + 0.001)
+                  v = sum([self._sess.run(tf.nn.embedding_lookup(my_embedding,w)) for w in i]) / (len(i) + 0.001)
+                  ##v = sum([tf.nn.embedding_lookup(my_embedding,w) for w in i]) / (len(i) + 0.001)
               else:
                   v = np.random.uniform(0, 1, 128)
               sentence_vectors.append(v)
@@ -175,26 +184,26 @@ class BeamSearchDecoder(object):
           return sentence_vectors
 
       def build_similarity_matrix(self, sentences, sentence_vectors):
-       # Create an empty similarity matrix
+          # Create an empty similarity matrix
           similarity_matrix = np.zeros((len(sentences), len(sentences)))
 
           for idx1 in range(len(sentences)):
              for idx2 in range(len(sentences)):
                  if idx1 != idx2:  # ignore if both are same sentences
                   #continue
-              # similarity_matrix[idx1][idx2] = self.sentence_similarity(sentence_vectors[idx1].reshape(1,1),sentence_vectors[idx2].reshape(1,1))
-              # similarity_matrix[idx1][idx2] = self.sentence_similarity(sentence_vectors[idx1],sentence_vectors[idx2])
+                  # similarity_matrix[idx1][idx2] = self.sentence_similarity(sentence_vectors[idx1].reshape(1,1),sentence_vectors[idx2].reshape(1,1))
+                  # similarity_matrix[idx1][idx2] = self.sentence_similarity(sentence_vectors[idx1],sentence_vectors[idx2])
                      similarity_matrix[idx1][idx2] = cosine_similarity(sentence_vectors[idx1].reshape(1,128),sentence_vectors[idx2].reshape(1,128))[0,0]
           return similarity_matrix
 
-      def generate_summary(self, decoded_output_my_str,top_n,ckpt_file_name,name_variable_to_restore,vocab):
+      def generate_summary(self, decoded_output_my_str,top_n,ckpt_file_name,name_variable_to_restore,vocab,my_embedding):
           summarize_text = []
          
           #reader = pywrap_tensorflow.NewCheckpointReader(ckpt_file_name)#read .ckpt
-         # var_to_shape_map = reader.get_variable_to_shape_map()#get variable
-         # my_embedding = tf.get_variable("my_embedding", var_to_shape_map[name_variable_to_restore], trainable=False)#rename 'embedding'variable name to my_embedding
-          my_embedding = tf.get_variable('embedding', [50000, hps.emb_dim], dtype=tf.float32)
-
+          # var_to_shape_map = reader.get_variable_to_shape_map()#get variable
+          # my_embedding = tf.get_variable("my_embedding", var_to_shape_map[name_variable_to_restore], trainable=False)#rename 'embedding'variable name to my_embedding
+          #my_embedding = tf.get_variable('embedding', [50000, hps.emb_dim], dtype=tf.float32)
+         
           # Step 1 - Read text anc split it
           sentences,line_split= read_article(self,decoded_output_my_str)
           sentence_vectors= the_sentence_vectors(self,sentences,my_embedding,vocab)
@@ -203,7 +212,7 @@ class BeamSearchDecoder(object):
 
           # Step 3 - Rank sentences in similarity martix
           sentence_similarity_graph = nx.from_numpy_array(sentence_similarity_martix)
-          scores = nx.pagerank(sentence_similarity_graph,max_iter=300)#max_iter is 最大迭代次数
+          scores = nx.pagerank(sentence_similarity_graph,max_iter=1000)#max_iter is 最大迭代次数
 
            # Step 4 - Sort the rank and pick top sentences
           ranked_sentence = sorted(((scores[i], s) for i, s in enumerate(line_split)), reverse=True)
@@ -217,7 +226,7 @@ class BeamSearchDecoder(object):
           # print("Summarize Text: \n", ". ".join(summarize_text))
           # print("lllaaaaaa\n",summarize_texted)
       
-      summarize_texted,sentences=generate_summary(self,decoded_output_my_str,top_n,ckpt_file_name,name_variable_to_restore,vocab)
+      summarize_texted,sentences=generate_summary(self,decoded_output_my_str,top_n,ckpt_file_name,name_variable_to_restore,vocab,my_embedding)
       return summarize_texted
 
 
